@@ -22,7 +22,7 @@ graph TD
     MainWindow --> Logger[Logger: UI + файлы]
 ```
 
-Worker — выполняет длительную работу в собственном QThread.
+Worker — выполняет всю обработку в собственном QThread.
 Внутри реализован конечный автомат с состояниями (Idle, Running, Paused) и событиями (FileStarted, FileProgress, FileFinished, …).
 
 MainWindow — графический интерфейс, валидация параметров, запуск/остановка задач, отображение статуса и прогресса.
