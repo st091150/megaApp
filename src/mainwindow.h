@@ -6,11 +6,9 @@
 #include "utils.h"
 #include "worker.h"
 
-
 #include <QDateTime>
 #include <QMainWindow>
 #include <QTimer>
-
 
 using namespace TaskModel;
 using namespace WorkerModel;
@@ -29,6 +27,7 @@ private:
   using LogLevel = Logger::ELogLevel;
 
   using Task = TaskModel::Task;
+
 private:
   void init();
 

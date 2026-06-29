@@ -15,14 +15,14 @@ class Worker : public QObject {
   Q_OBJECT
 
 public:
-friend class TestWorkerXor;
+  friend class TestWorkerXor;
 
 private:
-    using Task = TaskModel::Task;
+  using Task = TaskModel::Task;
 
-    using Event = WorkerModel::EEvent;
-    using State = WorkerModel::EState;
-    using Status = WorkerModel::Status;
+  using Event = WorkerModel::EEvent;
+  using State = WorkerModel::EState;
+  using Status = WorkerModel::Status;
 
 public:
   explicit Worker(QObject *parent = nullptr);
@@ -33,7 +33,7 @@ public:
   bool isPaused();
 
 public slots:
-  void start(const Worker::Task& newTask);
+  void start(const Worker::Task &newTask);
   void pause();
   void resume();
   void stop();
@@ -43,7 +43,7 @@ signals:
   void statusUpdate(const Worker::Status &status);
 
 private:
-  void run(const Task& task);
+  void run(const Task &task);
   void initNewTask(const Task &params);
 
   void changeState(State newState, Event trigger);
@@ -58,16 +58,11 @@ private:
                               const QString &file,
                               EDuplicateAction duplicationFlag) const;
 
-  Event processFile(const QString& inputFilePath,
-                    const QString& outputFilePath,
-                    bool deleteSourceFlag,
-                    uint64_t keyWord,
-                    qint64 totalBytes,
+  Event processFile(const QString &inputFilePath, const QString &outputFilePath,
+                    bool deleteSourceFlag, uint64_t keyWord, qint64 totalBytes,
                     qint64 &processedBytes);
 
   void wordXor(char *data, qint64 size, uint64_t keyWord);
-
-
 
 private:
   std::optional<Status> _currentTaskStatus;

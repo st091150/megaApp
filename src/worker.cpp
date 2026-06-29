@@ -7,40 +7,39 @@
 #include <QMutexLocker>
 #include <QThread>
 
-
 Worker::Worker(QObject *parent) : QObject(parent) {}
 
 bool Worker::isPaused() {
-    QMutexLocker lock(&_mutex);
-    return _state == State::Paused;
+  QMutexLocker lock(&_mutex);
+  return _state == State::Paused;
 }
 
 bool Worker::isBusy() {
-    QMutexLocker lock(&_mutex);
-    return _state == State::Running || _state == State::Paused;
+  QMutexLocker lock(&_mutex);
+  return _state == State::Running || _state == State::Paused;
 }
 
 void Worker::initNewTask(const Task &newTask) {
-    Status newStatus;
+  Status newStatus;
 
-    newStatus.event = Event::None;
-    newStatus.taskStatusInfo.totalFiles = newTask.files.size();
+  newStatus.event = Event::None;
+  newStatus.taskStatusInfo.totalFiles = newTask.files.size();
 
-    _currentTaskStatus = newStatus;
-    _state = State::Running;
+  _currentTaskStatus = newStatus;
+  _state = State::Running;
 
-    QMutexLocker lock(&_mutex);
-    _userRequest = EUserRequestEvent::None;
+  QMutexLocker lock(&_mutex);
+  _userRequest = EUserRequestEvent::None;
 }
 
 void Worker::emitStatus(Event event) {
-    if (_currentTaskStatus) {
-        _currentTaskStatus->event = event;
-        emit statusUpdate(*_currentTaskStatus);
-    }
+  if (_currentTaskStatus) {
+    _currentTaskStatus->event = event;
+    emit statusUpdate(*_currentTaskStatus);
+  }
 }
 
-void Worker::run(const Task& task) {
+void Worker::run(const Task &task) {
   initNewTask(task);
 
   if (task.hexKey.size() != ALGORITHM_KEY_SIZE) {
@@ -59,29 +58,27 @@ void Worker::run(const Task& task) {
   uint64_t keyWord;
   memcpy(&keyWord, task.hexKey.constData(), ALGORITHM_KEY_SIZE);
   for (const QString &file : std::as_const(task.files)) {
-      _currentTaskStatus->fileStatusInfo.currentFile = file;
-      if (handleUserRequest()) {
-          changeState(State::Idle, EEvent::UserStopRequest);
-          return;
-      }
+    _currentTaskStatus->fileStatusInfo.currentFile = file;
+    if (handleUserRequest()) {
+      changeState(State::Idle, EEvent::UserStopRequest);
+      return;
+    }
     emitStatus(Event::FileStarted);
 
     QString inputFilePath = QDir(task.inputPath).filePath(file);
-    QString outputFilePath = buildOutputFilePath(task.outputPath, file, task.duplicateAction);
+    QString outputFilePath =
+        buildOutputFilePath(task.outputPath, file, task.duplicateAction);
 
-    Event fileProcessingResult = processFile(inputFilePath,
-                                        outputFilePath,
-                                        task.deleteSourceFlag,
-                                        keyWord,
-                                        totalBytes,
-                                        processedBytes);
+    Event fileProcessingResult =
+        processFile(inputFilePath, outputFilePath, task.deleteSourceFlag,
+                    keyWord, totalBytes, processedBytes);
 
     if (fileProcessingResult == EEvent::UserStopRequest) {
-        changeState(State::Idle, EEvent::UserStopRequest);
-        return;
+      changeState(State::Idle, EEvent::UserStopRequest);
+      return;
     }
     if (fileProcessingResult == Event::FileFinished)
-        _currentTaskStatus->taskStatusInfo.processedFiles++;
+      _currentTaskStatus->taskStatusInfo.processedFiles++;
 
     emitStatus(fileProcessingResult);
   }
@@ -89,45 +86,45 @@ void Worker::run(const Task& task) {
   changeState(State::Idle, Event::TaskFinished);
 }
 
-void Worker::start(const Worker::Task& newTask) {
-    if (!isBusy()){
-        run(newTask);
-    }
+void Worker::start(const Worker::Task &newTask) {
+  if (!isBusy()) {
+    run(newTask);
+  }
 }
 
 bool Worker::handleUserRequest() {
-    bool isWasPaused = false;
+  bool isWasPaused = false;
   QMutexLocker lock(&_mutex);
   while (_userRequest == EUserRequestEvent::Pause) {
-      changeState(State::Paused, EEvent::UserPauseRequest);
-      isWasPaused = true;
+    changeState(State::Paused, EEvent::UserPauseRequest);
+    isWasPaused = true;
     _pauseCond.wait(&_mutex);
   }
   if (_userRequest == EUserRequestEvent::Stop) {
-      return true;
+    return true;
   } else if (isWasPaused) {
-      changeState(State::Running, EEvent::UserResumeRequest);
-      return false;
+    changeState(State::Running, EEvent::UserResumeRequest);
+    return false;
   }
   return false;
 }
 
 void Worker::wordXor(char *data, qint64 size, uint64_t key) {
-    if (!data || size <= 0)
-        return;
+  if (!data || size <= 0)
+    return;
 
-    const uint8_t *k = reinterpret_cast<const uint8_t *>(&key);
-    qint64 aligned = size - (size % sizeof(uint64_t));
+  const uint8_t *k = reinterpret_cast<const uint8_t *>(&key);
+  qint64 aligned = size - (size % sizeof(uint64_t));
 
-    for (qint64 i = 0; i < aligned; i += sizeof(uint64_t)) {
-        uint64_t word;
-        memcpy(&word, data + i, sizeof(word));
-        word ^= key;
-        memcpy(data + i, &word, sizeof(word));
-    }
-    for (qint64 j = 0; aligned < size; ++j) {
-        data[aligned++] ^= k[j % 8];
-    }
+  for (qint64 i = 0; i < aligned; i += sizeof(uint64_t)) {
+    uint64_t word;
+    memcpy(&word, data + i, sizeof(word));
+    word ^= key;
+    memcpy(data + i, &word, sizeof(word));
+  }
+  for (qint64 j = 0; aligned < size; ++j) {
+    data[aligned++] ^= k[j % 8];
+  }
 }
 
 QString Worker::makeUniqueTempPath(const QString &finalPath) const {
@@ -151,10 +148,9 @@ QString Worker::makeUniqueTempPath(const QString &finalPath) const {
   }
 }
 
-QString Worker::buildOutputFilePath(const QString &outputFilePath,
-                                    const QString &file,
-                                    const EDuplicateAction duplicationFlag) const
-{
+QString
+Worker::buildOutputFilePath(const QString &outputFilePath, const QString &file,
+                            const EDuplicateAction duplicationFlag) const {
   QString outputPath = QDir(outputFilePath).filePath(file);
 
   if (duplicationFlag == EDuplicateAction::Overwrite) {
@@ -178,12 +174,10 @@ QString Worker::buildOutputFilePath(const QString &outputFilePath,
   return outputPath;
 }
 
-EEvent Worker::processFile(const QString& inputFilePath,
-                          const QString& outputFilePath,
-                          bool deleteSourceFlag,
-                          uint64_t keyWord,
-                          qint64 totalBytes,
-                          qint64 &processedBytes) {
+EEvent Worker::processFile(const QString &inputFilePath,
+                           const QString &outputFilePath, bool deleteSourceFlag,
+                           uint64_t keyWord, qint64 totalBytes,
+                           qint64 &processedBytes) {
 
   const bool sameFile = (inputFilePath == outputFilePath);
 
@@ -238,9 +232,9 @@ EEvent Worker::processFile(const QString& inputFilePath,
       if (w <= 0) {
         cleanUp();
         if (handleUserRequest()) {
-            return Event::UserStopRequest;
+          return Event::UserStopRequest;
         } else {
-            return Event::FileWriteUnknownError;
+          return Event::FileWriteUnknownError;
         }
       }
 
@@ -299,32 +293,32 @@ EEvent Worker::processFile(const QString& inputFilePath,
 }
 
 void Worker::changeState(State newState, Event trigger) {
-    _state = newState;
-    if (_currentTaskStatus) {
-        _currentTaskStatus->event = trigger;
-        emit statusUpdate(*_currentTaskStatus);
-    }
+  _state = newState;
+  if (_currentTaskStatus) {
+    _currentTaskStatus->event = trigger;
+    emit statusUpdate(*_currentTaskStatus);
+  }
 }
 
 void Worker::pause() {
-QMutexLocker lock(&_mutex);
-    _userRequest = EUserRequestEvent::Pause;
+  QMutexLocker lock(&_mutex);
+  _userRequest = EUserRequestEvent::Pause;
 }
 
 void Worker::resume() {
-    QMutexLocker lock(&_mutex);
-    _userRequest = EUserRequestEvent::None;
-    _pauseCond.wakeAll();
+  QMutexLocker lock(&_mutex);
+  _userRequest = EUserRequestEvent::None;
+  _pauseCond.wakeAll();
 }
 
 void Worker::shutdown() {
   QMutexLocker lock(&_mutex);
-    _userRequest = EUserRequestEvent::Stop;
+  _userRequest = EUserRequestEvent::Stop;
   _pauseCond.wakeAll();
 }
 
 void Worker::stop() {
   QMutexLocker lock(&_mutex);
-    _userRequest = EUserRequestEvent::Stop;
+  _userRequest = EUserRequestEvent::Stop;
   _pauseCond.wakeAll();
 }

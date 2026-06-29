@@ -1,22 +1,21 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-#include "workerModel.h"
 #include "taskModel.h"
+#include "workerModel.h"
 
 #include <QByteArray>
 #include <QString>
 #include <QStringList>
 
 enum class ETaskValidation {
-    Ok,
-    InputPathEmpty,
-    InputPathNotExists,
-    OutputPathEmpty,
-    OutputPathCannotCreate,
-    InvalidXorKey
+  Ok,
+  InputPathEmpty,
+  InputPathNotExists,
+  OutputPathEmpty,
+  OutputPathCannotCreate,
+  InvalidXorKey
 };
-
 
 QByteArray hexStringToByteArray(const QString &hexStr);
 

@@ -3,14 +3,12 @@
 #include "ui_mainwindow.h"
 #include "utils.h"
 
-
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QStyle>
 #include <QThread>
 #include <QTimer>
-
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MegaApp), logger(new Logger) {
@@ -65,10 +63,8 @@ void MainWindow::init() {
   initStatusBars();
 
   connect(ui->TimerRunModeBtn, &QCheckBox::toggled, this, [this]() {
-    if (!_prevTask ||
-        (_prevTask->runMode != ERunMode::Timer ||
-         !_isPaused) &&
-            !_tickTimer.isActive()) {
+    if (!_prevTask || (_prevTask->runMode != ERunMode::Timer || !_isPaused) &&
+                          !_tickTimer.isActive()) {
       ui->intervalTimerBox->setVisible(ui->TimerRunModeBtn->isChecked());
     }
   });
@@ -99,8 +95,7 @@ void MainWindow::init() {
   connect(_thread, &QThread::finished, _worker, &QObject::deleteLater);
   connect(_thread, &QThread::finished, _thread, &QObject::deleteLater);
 
-  connect(_worker, &Worker::statusUpdate, this,
-          &MainWindow::parseWorkerStatus);
+  connect(_worker, &Worker::statusUpdate, this, &MainWindow::parseWorkerStatus);
 
   _thread->start();
 }
@@ -135,24 +130,23 @@ void MainWindow::closeEvent(QCloseEvent *event) {
   event->accept();
 }
 
-TaskModel::Task MainWindow::createTask() const{
+TaskModel::Task MainWindow::createTask() const {
   QStringList files = getFileList(ui->inputDirLineEdit->text(),
                                   ui->inputFileMaskLineEdit->text());
   QByteArray hexKey = hexStringToByteArray(ui->xorKeyLineEdit->text());
 
-  Task Task{
-      .inputPath = ui->inputDirLineEdit->text(),
-      .outputPath = ui->outputDirLineEdit->text(),
-      .fileMask = ui->inputFileMaskLineEdit->text(),
-      .files = files,
-      .hexKey = hexKey,
-      .deleteSourceFlag = ui->deleteSourceCheckBox->isChecked(),
-      .timerSecTime = ui->timerIntervalSpinBox->value(),
-      .duplicateAction = ui->overwriteBtn->isChecked()
-                             ? EDuplicateAction::Overwrite
-                             : EDuplicateAction::AddCounter,
-      .runMode = ui->OnceRunMode->isChecked() ? ERunMode::Once
-                                              : ERunMode::Timer};
+  Task Task{.inputPath = ui->inputDirLineEdit->text(),
+            .outputPath = ui->outputDirLineEdit->text(),
+            .fileMask = ui->inputFileMaskLineEdit->text(),
+            .files = files,
+            .hexKey = hexKey,
+            .deleteSourceFlag = ui->deleteSourceCheckBox->isChecked(),
+            .timerSecTime = ui->timerIntervalSpinBox->value(),
+            .duplicateAction = ui->overwriteBtn->isChecked()
+                                   ? EDuplicateAction::Overwrite
+                                   : EDuplicateAction::AddCounter,
+            .runMode = ui->OnceRunMode->isChecked() ? ERunMode::Once
+                                                    : ERunMode::Timer};
 
   return Task;
 }
@@ -175,8 +169,7 @@ void MainWindow::runTask(bool fromTimer) {
     return;
   }
 
-  _prevTask->files =
-      getFileList(_prevTask->inputPath, _prevTask->fileMask);
+  _prevTask->files = getFileList(_prevTask->inputPath, _prevTask->fileMask);
   if (_prevTask->files.isEmpty()) {
     warningLogMessage("Файлы по маске не найдены.");
     return;
@@ -216,7 +209,8 @@ void MainWindow::logMessage(const QString &msg, LogLevel logLevel) {
   }
 }
 
-void MainWindow::logMessage(const QString &msg, LogLevel logLevel, OutputMode mode) {
+void MainWindow::logMessage(const QString &msg, LogLevel logLevel,
+                            OutputMode mode) {
   if (!logger)
     return;
 
@@ -265,17 +259,15 @@ void MainWindow::logTask(const Task &params) {
   infoLogMessage(QString("Удалять исходные файлы: %1")
                      .arg(params.deleteSourceFlag ? "Да" : "Нет"));
 
-  QString dupAction =
-      (params.duplicateAction == EDuplicateAction::Overwrite)
-          ? "Перезапись"
-          : "Добавить счетчик к имени";
+  QString dupAction = (params.duplicateAction == EDuplicateAction::Overwrite)
+                          ? "Перезапись"
+                          : "Добавить счетчик к имени";
   infoLogMessage(QString("Действие при повторе: %1").arg(dupAction));
-  infoLogMessage(QString("Ключ XOR: %1")
-                     .arg(QString::fromLatin1(params.hexKey.toHex())));
-  infoLogMessage(QString("Режим: %1")
-                     .arg(params.runMode == ERunMode::Once
-                              ? "Разовый"
-                              : "По таймеру"));
+  infoLogMessage(
+      QString("Ключ XOR: %1").arg(QString::fromLatin1(params.hexKey.toHex())));
+  infoLogMessage(
+      QString("Режим: %1")
+          .arg(params.runMode == ERunMode::Once ? "Разовый" : "По таймеру"));
   if (params.runMode == ERunMode::Timer) {
     infoLogMessage(QString("Интервал таймера: %1 сек")
                        .arg(ui->timerIntervalSpinBox->value()));
@@ -311,7 +303,7 @@ void MainWindow::logTask(const Task &params) {
 
 void MainWindow::parseWorkerStatus(const Status &s) {
   if (_worker) {
-        _isPaused = _worker->isPaused();
+    _isPaused = _worker->isPaused();
   }
 
   if (_isPaused) {
@@ -323,7 +315,8 @@ void MainWindow::parseWorkerStatus(const Status &s) {
   if (s.event == EEvent::UserStopRequest) {
     initStatusBars();
   } else {
-    updateStatusBars(s.taskStatusInfo.processedFiles, s.taskStatusInfo.totalFiles, s.taskStatusInfo.percent,
+    updateStatusBars(s.taskStatusInfo.processedFiles,
+                     s.taskStatusInfo.totalFiles, s.taskStatusInfo.percent,
                      s.fileStatusInfo.currentFile, s.fileStatusInfo.percent);
   }
 
@@ -335,13 +328,17 @@ void MainWindow::parseWorkerStatus(const Status &s) {
   logMessage("=== [WORKER] ===", Logger::Info, OutputMode::FileSystemOnly);
 
   if (isWorkerErrorEvent(s.event)) {
-    logMessage(QString("Событие: ") + workerEventToString(s.event), Logger::Error);
+    logMessage(QString("Событие: ") + workerEventToString(s.event),
+               Logger::Error);
   } else {
-    logMessage(QString("Событие: ") + workerEventToString(s.event), Logger::Info);
+    logMessage(QString("Событие: ") + workerEventToString(s.event),
+               Logger::Info);
   }
 
-  infoLogMessage(QString("Текущий файл обработки: %1").arg(s.fileStatusInfo.currentFile));
-  infoLogMessage(QString("Прогресс обработки файла: %1%").arg(s.fileStatusInfo.percent));
+  infoLogMessage(
+      QString("Текущий файл обработки: %1").arg(s.fileStatusInfo.currentFile));
+  infoLogMessage(
+      QString("Прогресс обработки файла: %1%").arg(s.fileStatusInfo.percent));
   infoLogMessage(QString("Обработано файлов: %1/%2")
                      .arg(s.taskStatusInfo.processedFiles)
                      .arg(s.taskStatusInfo.totalFiles));
@@ -353,7 +350,6 @@ void MainWindow::parseWorkerStatus(const Status &s) {
   // } else {
   //     infoLogMessage(fileStatus);
   // }
-
 }
 
 void MainWindow::onTick() {
@@ -385,8 +381,7 @@ void MainWindow::onTick() {
 }
 
 void MainWindow::startTimerMode() {
-  if (!_prevTask ||
-      _prevTask->runMode != ERunMode::Timer) {
+  if (!_prevTask || _prevTask->runMode != ERunMode::Timer) {
     return;
   }
   int intervalSec;
@@ -431,8 +426,7 @@ void MainWindow::onStart() {
     return;
   }
 
-  if (params.runMode == ERunMode::Timer &&
-      !validateTimerSettings()) {
+  if (params.runMode == ERunMode::Timer && !validateTimerSettings()) {
     logMessage("Интервал таймера должен быть больше 0.", Logger::Error);
     return;
   }
