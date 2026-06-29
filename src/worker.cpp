@@ -8,43 +8,45 @@
 #include <QThread>
 
 
-Worker::Worker(QObject *parent) : QObject(parent) {
-  _status.state = State::Idle;
+Worker::Worker(QObject *parent) : QObject(parent) {}
+
+bool Worker::isPaused() {
+    QMutexLocker lock(&_mutex);
+    return _state == State::Paused;
 }
 
-void Worker::initNewTask(const TaskParams &newTask) {
-  QMutexLocker lock(&_mutex);
-  _stopped = false;
-  _paused = false;
-  _status = WorkerStatus();
-  _status.event = Event::TaskStarted;
-  _status.totalFiles = newTask.files.size();
-  _status.message = "Запуск выполнения";
-  _status.state = State::Running;
-  _status.taskProgress = 0;
+bool Worker::isBusy() {
+    QMutexLocker lock(&_mutex);
+    return _state == State::Running || _state == State::Paused;
+}
+
+void Worker::initNewTask(const Task &newTask) {
+    Status newStatus;
+
+    newStatus.event = Event::None;
+    newStatus.taskStatusInfo.totalFiles = newTask.files.size();
+
+    _currentTaskStatus = newStatus;
+    _state = State::Running;
+
+    QMutexLocker lock(&_mutex);
+    _userRequest = EUserRequestEvent::None;
 }
 
 void Worker::emitStatus(Event event) {
-  WorkerStatus copy;
-  {
-    QMutexLocker lock(&_mutex);
-    if (event != Event::None)
-      _status.event = event;
-    copy = _status;
-  }
-  emit statusChanged(copy);
+    if (_currentTaskStatus) {
+        _currentTaskStatus->event = event;
+        emit statusUpdate(*_currentTaskStatus);
+    }
 }
 
-void Worker::run(TaskParams task) {
+void Worker::run(const Task& task) {
   initNewTask(task);
 
-  if (task.hexKey.size() != ALGORITHM_HEX_KEY_SIZE) {
-    finish(QString("Неверный размер ключа (%1, ожидаемый размер %2)")
-               .arg(task.hexKey.size(), ALGORITHM_HEX_KEY_SIZE),
-           State::Error, Event::TaskError);
+  if (task.hexKey.size() != ALGORITHM_KEY_SIZE) {
+    changeState(State::Idle, Event::HexKeySizeError);
     return;
   }
-
   qint64 totalBytes = 0;
   QDir inputDir(task.inputPath);
   for (const QString &file : std::as_const(task.files)) {
@@ -55,126 +57,77 @@ void Worker::run(TaskParams task) {
   qint64 processedBytes = 0;
 
   uint64_t keyWord;
-  memcpy(&keyWord, task.hexKey.constData(), ALGORITHM_HEX_KEY_SIZE);
+  memcpy(&keyWord, task.hexKey.constData(), ALGORITHM_KEY_SIZE);
   for (const QString &file : std::as_const(task.files)) {
-    setCurrentFile(file);
-    setStatusMessage(QString("Начало обработки %1").arg(file));
-
-    if (isUserRequest()) {
-      finish(USER_STOP_REQUEST, State::Stopped, Event::TaskStopped);
-      return;
-    }
+      _currentTaskStatus->fileStatusInfo.currentFile = file;
+      if (handleUserRequest()) {
+          changeState(State::Idle, EEvent::UserStopRequest);
+          return;
+      }
     emitStatus(Event::FileStarted);
 
-    FileProcessStatus result =
-        processFile(task, file, keyWord, totalBytes, processedBytes);
+    QString inputFilePath = QDir(task.inputPath).filePath(file);
+    QString outputFilePath = buildOutputFilePath(task.outputPath, file, task.duplicateAction);
 
-    switch (result) {
-    case FileProcessStatus::Ok: {
-      setStatusMessage(QString("%1 файл обработан.").arg(file));
-      addProcessedFile();
-      if (isUserRequest()) {
-        finish(USER_STOP_REQUEST, State::Stopped, Event::TaskStopped);
+    Event fileProcessingResult = processFile(inputFilePath,
+                                        outputFilePath,
+                                        task.deleteSourceFlag,
+                                        keyWord,
+                                        totalBytes,
+                                        processedBytes);
+
+    if (fileProcessingResult == EEvent::UserStopRequest) {
+        changeState(State::Idle, EEvent::UserStopRequest);
         return;
-      }
-      emitStatus(Event::FileFinished);
-      break;
     }
-    case FileProcessStatus::UserStopRequest: {
-      finish(USER_STOP_REQUEST, State::Stopped, Event::TaskStopped);
-      return;
-    }
-    default: {
-      if (isUserRequest()) {
-        finish(USER_STOP_REQUEST, State::Stopped, Event::TaskStopped);
-        return;
-      }
-      emitStatus(Event::FileError);
-    }
-    }
+    if (fileProcessingResult == Event::FileFinished)
+        _currentTaskStatus->taskStatusInfo.processedFiles++;
+
+    emitStatus(fileProcessingResult);
   }
 
-  finish(TASK_FINISHED, State::Finished, Event::TaskFinished);
+  changeState(State::Idle, Event::TaskFinished);
 }
 
-void Worker::start(TaskParams newTask) {
-  {
-    QMutexLocker lock(&_mutex);
-    if (_status.state == State::Running || _status.state == State::Paused) {
-      return;
+void Worker::start(const Worker::Task& newTask) {
+    if (!isBusy()){
+        run(newTask);
     }
-  }
-  run(std::move(newTask));
 }
 
-void Worker::setStatusState(State newState) {
+bool Worker::handleUserRequest() {
+    bool isWasPaused = false;
   QMutexLocker lock(&_mutex);
-  _status.state = newState;
-}
-
-void Worker::setEvent(Event event) {
-  QMutexLocker lock(&_mutex);
-  _status.event = event;
-}
-
-void Worker::setStatusMessage(const QString &message) {
-  QMutexLocker lock(&_mutex);
-  _status.message = message;
-}
-
-void Worker::setCurrentFile(const QString &fileName) {
-  QMutexLocker lock(&_mutex);
-  _status.currentFile = fileName;
-  _status.fileProgress = 0;
-}
-
-void Worker::setFileProgress(int progress) {
-  QMutexLocker lock(&_mutex);
-  _status.fileProgress = progress;
-}
-
-void Worker::addProcessedFile() {
-  QMutexLocker lock(&_mutex);
-  _status.processedFiles++;
-}
-
-void Worker::setTaskProgress(int progressPercent) {
-  if (progressPercent < 0 || progressPercent > 100)
-    return;
-  QMutexLocker lock(&_mutex);
-  _status.fileProgress = progressPercent;
-}
-
-bool Worker::isPaused() { return _paused; }
-
-bool Worker::isBusy() {
-  QMutexLocker lock(&_mutex);
-  return _status.state == State::Running || _status.state == State::Paused;
-}
-
-bool Worker::isUserRequest() {
-  QMutexLocker lock(&_mutex);
-  while (_paused && !_stopped) {
+  while (_userRequest == EUserRequestEvent::Pause) {
+      changeState(State::Paused, EEvent::UserPauseRequest);
+      isWasPaused = true;
     _pauseCond.wait(&_mutex);
   }
-  return _stopped;
+  if (_userRequest == EUserRequestEvent::Stop) {
+      return true;
+  } else if (isWasPaused) {
+      changeState(State::Running, EEvent::UserResumeRequest);
+      return false;
+  }
+  return false;
 }
 
 void Worker::wordXor(char *data, qint64 size, uint64_t key) {
-  for (qint64 i = 0; i + sizeof(uint64_t) <= size; i += sizeof(uint64_t)) {
-    uint64_t word;
-    memcpy(&word, data + i, sizeof(word));
-    word ^= key;
-    memcpy(data + i, &word, sizeof(word));
-  }
+    if (!data || size <= 0)
+        return;
 
-  const uint8_t *k = reinterpret_cast<const uint8_t *>(&key);
+    const uint8_t *k = reinterpret_cast<const uint8_t *>(&key);
+    qint64 aligned = size - (size % sizeof(uint64_t));
 
-  uint8_t ki = 0;
-  for (qint64 i = (size / 8) * 8; i < size; ++i) {
-    data[i] ^= k[ki++];
-    ki %= 8;
-  }
+    for (qint64 i = 0; i < aligned; i += sizeof(uint64_t)) {
+        uint64_t word;
+        memcpy(&word, data + i, sizeof(word));
+        word ^= key;
+        memcpy(data + i, &word, sizeof(word));
+    }
+    for (qint64 j = 0; aligned < size; ++j) {
+        data[aligned++] ^= k[j % 8];
+    }
 }
 
 QString Worker::makeUniqueTempPath(const QString &finalPath) const {
@@ -198,62 +151,61 @@ QString Worker::makeUniqueTempPath(const QString &finalPath) const {
   }
 }
 
-QString Worker::buildOutputFilePath(const TaskParams &task,
-                                    const QString &file) const {
-  QString outputFilePath = QDir(task.outputPath).filePath(file);
+QString Worker::buildOutputFilePath(const QString &outputFilePath,
+                                    const QString &file,
+                                    const EDuplicateAction duplicationFlag) const
+{
+  QString outputPath = QDir(outputFilePath).filePath(file);
 
-  if (task.duplicateAction == TaskParams::DuplicateAction::Overwrite) {
-    return outputFilePath;
+  if (duplicationFlag == EDuplicateAction::Overwrite) {
+    return outputPath;
   }
 
-  QFileInfo fi(outputFilePath);
+  QFileInfo fi(outputPath);
 
   const QString baseName = fi.completeBaseName();
   const QString suffix = fi.suffix();
 
   int counter = 1;
-  while (QFile::exists(outputFilePath)) {
+  while (QFile::exists(outputPath)) {
     QString newName = QString("%1_%2").arg(baseName).arg(counter++);
     if (!suffix.isEmpty()) {
       newName += "." + suffix;
     }
-    outputFilePath = QDir(task.outputPath).filePath(newName);
+    outputPath = QDir(outputFilePath).filePath(newName);
   }
 
-  return outputFilePath;
+  return outputPath;
 }
 
-WorkerStatus::FileProcessStatus Worker::processFile(const TaskParams &task,
-                                                    const QString &file,
-                                                    uint64_t keyWord,
-                                                    qint64 totalBytes,
-                                                    qint64 &processedBytes) {
-  const QString inputFilePath = QDir(task.inputPath).filePath(file);
-  const QString finalOutputPath = buildOutputFilePath(task, file);
+EEvent Worker::processFile(const QString& inputFilePath,
+                          const QString& outputFilePath,
+                          bool deleteSourceFlag,
+                          uint64_t keyWord,
+                          qint64 totalBytes,
+                          qint64 &processedBytes) {
 
-  const bool sameFile = (inputFilePath == finalOutputPath);
+  const bool sameFile = (inputFilePath == outputFilePath);
 
-  const QString outputFilePath =
-      sameFile ? makeUniqueTempPath(finalOutputPath) : finalOutputPath;
+  const QString finalOutputFilePath =
+      sameFile ? makeUniqueTempPath(outputFilePath) : outputFilePath;
 
   QFile input(inputFilePath);
-  QFile output(outputFilePath);
+  QFile output(finalOutputFilePath);
 
   if (!input.open(QIODevice::ReadOnly)) {
-    setStatusMessage(OPEN_INPUT_FOLDER_ERROR);
-    return FileProcessStatus::Error;
+    return Event::OpenInputFolderError;
   }
 
   if (!output.open(QIODevice::WriteOnly)) {
-    setStatusMessage(OPEN_OUTPUT_FOLDER_ERROR);
-    return FileProcessStatus::Error;
+    return Event::OpenOutputFolderError;
   }
 
-  const auto cleanUp = [&output, &input, outputFilePath]() {
+  const auto cleanUp = [&output, &input, finalOutputFilePath]() {
     output.flush();
     output.close();
     input.close();
-    QFile::remove(outputFilePath);
+    QFile::remove(finalOutputFilePath);
   };
 
   QByteArray buffer(CHUNK_SIZE, Qt::Uninitialized);
@@ -264,20 +216,15 @@ WorkerStatus::FileProcessStatus Worker::processFile(const TaskParams &task,
 
   while (!input.atEnd()) {
 
-    if (isUserRequest())
-      return FileProcessStatus::UserStopRequest;
+    if (handleUserRequest())
+      return Event::UserStopRequest;
 
     const qint64 readBytes = input.read(buffer.data(), CHUNK_SIZE);
 
     if (readBytes < 0) {
       processedBytes += (totalSize - processed);
-      setTaskProgress(
-          (totalBytes == 0)
-              ? 100
-              : static_cast<int>((processedBytes * 100) / totalBytes));
-      setStatusMessage(READ_FILE_UNKNOWN_ERROR);
       cleanUp();
-      return FileProcessStatus::ProcessFileError;
+      return Event::ReadFileUnknownError;
     } else if (readBytes == 0)
       break;
 
@@ -289,13 +236,12 @@ WorkerStatus::FileProcessStatus Worker::processFile(const TaskParams &task,
                                     readBytes - totalWritten);
 
       if (w <= 0) {
-        if (isUserRequest()) {
-          cleanUp();
-          return FileProcessStatus::UserStopRequest;
-        }
-        setStatusMessage(FILE_WRITE_UNKNOWN_ERROR);
         cleanUp();
-        return FileProcessStatus::ProcessFileError;
+        if (handleUserRequest()) {
+            return Event::UserStopRequest;
+        } else {
+            return Event::FileWriteUnknownError;
+        }
       }
 
       totalWritten += w;
@@ -315,112 +261,70 @@ WorkerStatus::FileProcessStatus Worker::processFile(const TaskParams &task,
     if (fileProgress != lastProgress) {
       lastProgress = fileProgress;
 
-      QMutexLocker lock(&_mutex);
-      _status.fileProgress = fileProgress;
-      _status.taskProgress = taskProgress;
+      _currentTaskStatus->fileStatusInfo.percent = fileProgress;
+      _currentTaskStatus->taskStatusInfo.percent = taskProgress;
     }
 
-    if (isUserRequest()) {
+    if (handleUserRequest()) {
       cleanUp();
-      return FileProcessStatus::UserStopRequest;
+      return Event::UserStopRequest;
     }
-
-    emitStatus(Event::FileProgressUpdate);
+    emitStatus(Event::FileProgress);
   }
 
   if (!output.flush()) {
-    setStatusMessage(FILE_WRITE_UNKNOWN_ERROR);
-    return FileProcessStatus::ProcessFileError;
+    return Event::FileWriteUnknownError;
   }
 
   input.close();
   output.close();
 
   if (sameFile) {
-    if (!QFile::remove(finalOutputPath) && QFile::exists(finalOutputPath)) {
-      setStatusMessage(OLD_FILE_DELETE_ERROR);
-      return FileProcessStatus::Error;
+    if (!QFile::remove(outputFilePath) && QFile::exists(outputFilePath)) {
+      return Event::DeleteTempFileError;
     }
 
-    if (!QFile::rename(outputFilePath, finalOutputPath)) {
-      setStatusMessage(RENAME_FILE_ERROR);
-      return FileProcessStatus::Error;
+    if (!QFile::rename(finalOutputFilePath, outputFilePath)) {
+      return Event::RenameFileError;
     }
   }
 
-  if (task.deleteSourceFlag) {
+  if (deleteSourceFlag) {
     if (!QFile::remove(inputFilePath)) {
-      setStatusMessage(QString(CANT_DELETE_INPUT_FILE) + " " + file);
-      return FileProcessStatus::Error;
+      return Event::DeleteInputFileError;
     }
   }
 
-  return FileProcessStatus::Ok;
+  return Event::FileFinished;
 }
 
-void Worker::finish(const QString &message, State finalState, Event event) {
-  WorkerStatus copy;
-  {
-    QMutexLocker lock(&_mutex);
-    _status.message = message;
-    _status.state = finalState;
-    _status.event = event;
-    copy = _status;
-  }
-  emit statusChanged(copy);
+void Worker::changeState(State newState, Event trigger) {
+    _state = newState;
+    if (_currentTaskStatus) {
+        _currentTaskStatus->event = trigger;
+        emit statusUpdate(*_currentTaskStatus);
+    }
 }
 
 void Worker::pause() {
-  WorkerStatus copy;
-  {
-    QMutexLocker lock(&_mutex);
-    if (_paused || _status.state != State::Running)
-      return;
-    _paused = true;
-    _status.state = State::Paused;
-    _status.event = Event::TaskPaused;
-    _status.message = "Выполнение приостановлено";
-    copy = _status;
-  }
-  emit statusChanged(copy);
+QMutexLocker lock(&_mutex);
+    _userRequest = EUserRequestEvent::Pause;
 }
 
 void Worker::resume() {
-  WorkerStatus copy;
-  {
     QMutexLocker lock(&_mutex);
-    if (_status.state != State::Paused)
-      return;
-
-    _paused = false;
-
-    _status.state = State::Running;
-    _status.event = Event::TaskResumed;
-    _status.message = "Возобновление работы";
-    copy = _status;
+    _userRequest = EUserRequestEvent::None;
     _pauseCond.wakeAll();
-  }
-  emit statusChanged(copy);
 }
 
 void Worker::shutdown() {
   QMutexLocker lock(&_mutex);
-
-  _stopped = true;
-  _paused = false;
-
+    _userRequest = EUserRequestEvent::Stop;
   _pauseCond.wakeAll();
 }
 
 void Worker::stop() {
   QMutexLocker lock(&_mutex);
-  if (_stopped && _status.state != State::Running &&
-      _status.state != State::Paused)
-    return;
-
-  _stopped = true;
-
-  _status.state = State::Stopped;
-  _status.message = "Остановка работы";
+    _userRequest = EUserRequestEvent::Stop;
   _pauseCond.wakeAll();
 }

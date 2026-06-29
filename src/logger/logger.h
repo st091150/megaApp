@@ -12,13 +12,13 @@
 
 class Logger {
 public:
-    enum LogLevel {
+    enum ELogLevel {
         Info,
         Warning,
         Error
     };
 
-    enum OutputMode {
+    enum EOutputMode {
         FileSystemOnly,
         UIOnly,
         Both
@@ -34,27 +34,29 @@ public:
     void setUiLogObj(QTextEdit* uiLogTextEditObj);
     void setBasePath(const QString& path);
     void setRotationPolicy(int maxSizeBytes, int maxFileCount);
-    void setOutputMode(OutputMode mode);
+    void setOutputMode(EOutputMode mode);
 
-    OutputMode outputMode() const;
+    EOutputMode outputMode() const;
 
 public:
-    void log(const QString& msg, LogLevel level = Info);
+    void log(const QString& msg, ELogLevel level = Info);
     inline void info(const QString& msg) { log(msg, Info); }
     inline void warning(const QString& msg) { log(msg, Warning); }
     inline void error(const QString& msg) { log(msg, Error); }
 
 private:
     void openCurrentFile(QIODevice::OpenMode mode);
+
     void rotateLogs();
+
     QString currentFileName() const;
-    QString levelToString(LogLevel level) const;
+    QString levelToString(ELogLevel level) const;
     QString fileTimestamp() const;
     QString uiTimestamp() const;
 
 private:
     QTextEdit* _uiTextEditLog;
-    OutputMode _outputMode;
+    EOutputMode _outputMode;
     QString _basePath;
     int _maxFileSize;
     int _maxFileCount;

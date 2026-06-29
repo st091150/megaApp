@@ -17,7 +17,6 @@ set(SOURCES
     src/mainwindow.cpp
     src/logger/logger.cpp
     src/utils/utils.cpp
-    src/utils/errorMsg.cpp
     src/worker.cpp
 )
 
@@ -28,9 +27,8 @@ set(HEADERS
     src/logger/logger.h
     src/logger/loggerConfig.h
     src/utils/utils.h
-    src/utils/errorMsg.h
-    src/models/taskParams.h
-    src/models/workerStatus.h
+    src/models/taskModel.h
+    src/models/workerModel.h
 )
 
 set(UIS

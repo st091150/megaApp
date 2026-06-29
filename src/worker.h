@@ -1,13 +1,15 @@
 #ifndef WORKER_H
 #define WORKER_H
 
-#include "taskParams.h"
-#include "workerStatus.h"
+#include "taskModel.h"
+#include "workerModel.h"
 
 #include <QMutex>
 #include <QObject>
 #include <QWaitCondition>
 
+using namespace WorkerModel;
+using namespace TaskModel;
 
 class Worker : public QObject {
   Q_OBJECT
@@ -16,9 +18,11 @@ public:
 friend class TestWorkerXor;
 
 private:
-  using State = WorkerStatus::State;
-  using Event = WorkerStatus::Event;
-  using FileProcessStatus = WorkerStatus::FileProcessStatus;
+    using Task = TaskModel::Task;
+
+    using Event = WorkerModel::EEvent;
+    using State = WorkerModel::EState;
+    using Status = WorkerModel::Status;
 
 public:
   explicit Worker(QObject *parent = nullptr);
@@ -29,51 +33,48 @@ public:
   bool isPaused();
 
 public slots:
-  void start(TaskParams params);
+  void start(const Worker::Task& newTask);
   void pause();
   void resume();
   void stop();
   void shutdown();
 
 signals:
-  void statusChanged(const WorkerStatus &status);
+  void statusUpdate(const Worker::Status &status);
 
 private:
-  void run(TaskParams task);
-  void initNewTask(const TaskParams &params);
-  void emitStatus(Event event = Event::None);
+  void run(const Task& task);
+  void initNewTask(const Task &params);
 
-  void setEvent(Event event);
-  void setStatusState(State newState);
-  void setStatusMessage(const QString &message);
-  void setCurrentFile(const QString &fileName);
-  void setFileProgress(int progress);
-  void setTaskProgress(int progressPercent);
+  void changeState(State newState, Event trigger);
 
-  void addProcessedFile();
+  void emitStatus(Event event);
 
-  bool isUserRequest();
+  bool handleUserRequest();
 
   QString makeUniqueTempPath(const QString &finalPath) const;
 
-  QString buildOutputFilePath(const TaskParams &task,
-                              const QString &file) const;
+  QString buildOutputFilePath(const QString &outputFilePath,
+                              const QString &file,
+                              EDuplicateAction duplicationFlag) const;
 
-  FileProcessStatus processFile(const TaskParams &task, const QString &file,
-                                uint64_t keyWord, qint64 totalBytes,
-                                qint64 &processedBytes);
+  Event processFile(const QString& inputFilePath,
+                    const QString& outputFilePath,
+                    bool deleteSourceFlag,
+                    uint64_t keyWord,
+                    qint64 totalBytes,
+                    qint64 &processedBytes);
 
   void wordXor(char *data, qint64 size, uint64_t keyWord);
 
-  void finish(const QString &message, State finalState, Event event);
+
 
 private:
-  WorkerStatus _status;
-
-  std::atomic<bool> _stopped = false;
-  std::atomic<bool> _paused = false;
+  std::optional<Status> _currentTaskStatus;
 
   QMutex _mutex;
+  State _state = State::Idle;
+  EUserRequestEvent _userRequest;
   QWaitCondition _pauseCond;
 };
 

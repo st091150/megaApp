@@ -51,15 +51,15 @@ void Logger::setRotationPolicy(int maxSizeBytes, int maxFileCount) {
     }
 }
 
-void Logger::setOutputMode(OutputMode mode) {
+void Logger::setOutputMode(EOutputMode mode) {
     _outputMode = mode;
 }
 
-Logger::OutputMode Logger::outputMode() const {
+Logger::EOutputMode Logger::outputMode() const {
     return _outputMode;
 }
 
-QString Logger::levelToString(LogLevel level) const {
+QString Logger::levelToString(ELogLevel level) const {
     switch (level) {
         case Info:
             return "INFO";
@@ -106,7 +106,7 @@ void Logger::rotateLogs() {
     openCurrentFile(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text);
 }
 
-void Logger::log(const QString& msg, LogLevel level) {
+void Logger::log(const QString& msg, ELogLevel level) {
     if (_logFile.isOpen() && _maxFileSize > 0 && _logFile.size() + msg.size() > _maxFileSize) {
         rotateLogs();
     }

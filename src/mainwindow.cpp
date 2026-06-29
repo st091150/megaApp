@@ -65,8 +65,8 @@ void MainWindow::init() {
   initStatusBars();
 
   connect(ui->TimerRunModeBtn, &QCheckBox::toggled, this, [this]() {
-    if (!_prevTaskParams ||
-        (_prevTaskParams->runMode != TaskParams::RunMode::Timer ||
+    if (!_prevTask ||
+        (_prevTask->runMode != ERunMode::Timer ||
          !_isPaused) &&
             !_tickTimer.isActive()) {
       ui->intervalTimerBox->setVisible(ui->TimerRunModeBtn->isChecked());
@@ -99,7 +99,7 @@ void MainWindow::init() {
   connect(_thread, &QThread::finished, _worker, &QObject::deleteLater);
   connect(_thread, &QThread::finished, _thread, &QObject::deleteLater);
 
-  connect(_worker, &Worker::statusChanged, this,
+  connect(_worker, &Worker::statusUpdate, this,
           &MainWindow::parseWorkerStatus);
 
   _thread->start();
@@ -108,7 +108,6 @@ void MainWindow::init() {
 MainWindow::~MainWindow() {
   if (_worker) {
     _worker->stop();
-    _worker->resume();
   }
 
   if (_thread) {
@@ -121,9 +120,8 @@ MainWindow::~MainWindow() {
 
 void MainWindow::closeEvent(QCloseEvent *event) {
   if (_worker) {
-    logMessage("Закрытие: stop worker", Logger::Info);
+    logMessage("Завершение", Logger::Info);
     _worker->stop();
-    _worker->resume();
   }
 
   if (_thread) {
@@ -137,12 +135,12 @@ void MainWindow::closeEvent(QCloseEvent *event) {
   event->accept();
 }
 
-TaskParams MainWindow::createTaskParams() const {
+TaskModel::Task MainWindow::createTask() const{
   QStringList files = getFileList(ui->inputDirLineEdit->text(),
                                   ui->inputFileMaskLineEdit->text());
   QByteArray hexKey = hexStringToByteArray(ui->xorKeyLineEdit->text());
 
-  TaskParams taskParams{
+  Task Task{
       .inputPath = ui->inputDirLineEdit->text(),
       .outputPath = ui->outputDirLineEdit->text(),
       .fileMask = ui->inputFileMaskLineEdit->text(),
@@ -151,41 +149,19 @@ TaskParams MainWindow::createTaskParams() const {
       .deleteSourceFlag = ui->deleteSourceCheckBox->isChecked(),
       .timerSecTime = ui->timerIntervalSpinBox->value(),
       .duplicateAction = ui->overwriteBtn->isChecked()
-                             ? TaskParams::DuplicateAction::Overwrite
-                             : TaskParams::DuplicateAction::AddCounter,
-      .runMode = ui->OnceRunMode->isChecked() ? TaskParams::RunMode::Once
-                                              : TaskParams::RunMode::Timer};
+                             ? EDuplicateAction::Overwrite
+                             : EDuplicateAction::AddCounter,
+      .runMode = ui->OnceRunMode->isChecked() ? ERunMode::Once
+                                              : ERunMode::Timer};
 
-  return taskParams;
-}
-
-ParamsValidationResult
-MainWindow::validateTaskParams(const TaskParams &params) const {
-  if (params.inputPath.isEmpty())
-    return ParamsValidationResult::InputPathEmpty;
-
-  QDir inputDir(params.inputPath);
-  if (!inputDir.exists())
-    return ParamsValidationResult::InputPathNotExists;
-
-  if (params.outputPath.isEmpty())
-    return ParamsValidationResult::OutputPathEmpty;
-
-  QDir outputDir(params.outputPath);
-  if (!outputDir.exists() && !outputDir.mkpath("."))
-    return ParamsValidationResult::OutputPathCannotCreate;
-
-  if (params.hexKey.size() != XOR_KEY_BYTES)
-    return ParamsValidationResult::InvalidXorKey;
-
-  return ParamsValidationResult::Ok;
+  return Task;
 }
 
 bool MainWindow::validateTimerSettings() const {
   return ui->timerIntervalSpinBox->value() > 0;
 }
 
-void MainWindow::handleValidationError(ParamsValidationResult error) {
+void MainWindow::handleValidationError(ETaskValidation error) {
   QString msg = errorMessage(error);
   logMessage(msg, LogLevel::Error);
 }
@@ -194,14 +170,14 @@ void MainWindow::runTask(bool fromTimer) {
   if (isBusy()) {
     return;
   }
-  if (!_prevTaskParams) {
+  if (!_prevTask) {
     logMessage("Ошибка: задача не инициализирована.", Logger::Error);
     return;
   }
 
-  _prevTaskParams->files =
-      getFileList(_prevTaskParams->inputPath, _prevTaskParams->fileMask);
-  if (_prevTaskParams->files.isEmpty()) {
+  _prevTask->files =
+      getFileList(_prevTask->inputPath, _prevTask->fileMask);
+  if (_prevTask->files.isEmpty()) {
     warningLogMessage("Файлы по маске не найдены.");
     return;
   }
@@ -212,15 +188,15 @@ void MainWindow::runTask(bool fromTimer) {
     logMessage("=== Запуск (разовый) ===", Logger::Info);
   }
 
-  logTask(*_prevTaskParams);
-  startProcessing(*_prevTaskParams);
+  logTask(*_prevTask);
+  startProcessing(*_prevTask);
 }
 
-void MainWindow::startProcessing(const TaskParams &task) {
+void MainWindow::startProcessing(const Task &task) {
   if (!_worker)
     return;
   QMetaObject::invokeMethod(_worker, "start", Qt::QueuedConnection,
-                            Q_ARG(TaskParams, task));
+                            Q_ARG(Task, task));
 }
 
 void MainWindow::logMessage(const QString &msg, LogLevel logLevel) {
@@ -228,7 +204,7 @@ void MainWindow::logMessage(const QString &msg, LogLevel logLevel) {
     return;
 
   switch (logLevel) {
-  case Logger::LogLevel::Info:
+  case LogLevel::Info:
     logger->info(msg);
     break;
   case Logger::Warning:
@@ -240,8 +216,7 @@ void MainWindow::logMessage(const QString &msg, LogLevel logLevel) {
   }
 }
 
-void MainWindow::logMessage(const QString &msg, LogLevel logLevel,
-                            OutputMode mode) {
+void MainWindow::logMessage(const QString &msg, LogLevel logLevel, OutputMode mode) {
   if (!logger)
     return;
 
@@ -276,7 +251,7 @@ void MainWindow::browseOutputDirectory() {
     ui->outputDirLineEdit->setText(dir);
 }
 
-void MainWindow::logTask(const TaskParams &params) {
+void MainWindow::logTask(const Task &params) {
   OutputMode oldMode = logger->outputMode();
 
   logger->setOutputMode(OutputMode::FileSystemOnly);
@@ -291,17 +266,17 @@ void MainWindow::logTask(const TaskParams &params) {
                      .arg(params.deleteSourceFlag ? "Да" : "Нет"));
 
   QString dupAction =
-      (params.duplicateAction == TaskParams::DuplicateAction::Overwrite)
+      (params.duplicateAction == EDuplicateAction::Overwrite)
           ? "Перезапись"
-          : "Добавить номер";
+          : "Добавить счетчик к имени";
   infoLogMessage(QString("Действие при повторе: %1").arg(dupAction));
   infoLogMessage(QString("Ключ XOR: %1")
                      .arg(QString::fromLatin1(params.hexKey.toHex())));
   infoLogMessage(QString("Режим: %1")
-                     .arg(params.runMode == TaskParams::RunMode::Once
+                     .arg(params.runMode == ERunMode::Once
                               ? "Разовый"
                               : "По таймеру"));
-  if (params.runMode == TaskParams::RunMode::Timer) {
+  if (params.runMode == ERunMode::Timer) {
     infoLogMessage(QString("Интервал таймера: %1 сек")
                        .arg(ui->timerIntervalSpinBox->value()));
   }
@@ -334,9 +309,9 @@ void MainWindow::logTask(const TaskParams &params) {
   logger->setOutputMode(oldMode);
 }
 
-void MainWindow::parseWorkerStatus(const WorkerStatus &s) {
+void MainWindow::parseWorkerStatus(const Status &s) {
   if (_worker) {
-    _isPaused = _worker->isPaused();
+        _isPaused = _worker->isPaused();
   }
 
   if (_isPaused) {
@@ -345,37 +320,31 @@ void MainWindow::parseWorkerStatus(const WorkerStatus &s) {
     ui->pauseBtn->setText("Приостановить");
   }
 
-  if (s.event == WorkerStatus::Event::TaskStopped) {
+  if (s.event == EEvent::UserStopRequest) {
     initStatusBars();
   } else {
-    updateStatusBars(s.processedFiles, s.totalFiles, s.taskProgress,
-                     s.currentFile, s.fileProgress);
+    updateStatusBars(s.taskStatusInfo.processedFiles, s.taskStatusInfo.totalFiles, s.taskStatusInfo.percent,
+                     s.fileStatusInfo.currentFile, s.fileStatusInfo.percent);
   }
 
-  if (s.event == WorkerStatus::Event::FileProgressUpdate) {
+  if (s.event == EEvent::FileProgress) {
     return;
   }
+  logger->setOutputMode(Logger::Both);
 
-  logger->setOutputMode(Logger::FileSystemOnly);
+  logMessage("=== [WORKER] ===", Logger::Info, OutputMode::FileSystemOnly);
 
-  infoLogMessage("=== [WORKER] ===");
-  const QString status =
-      QString("Статус: %1").arg(workerStateToString(s.state));
-  if (s.event == WorkerStatus::Event::FileError ||
-      s.event == WorkerStatus::Event::TaskError) {
-    logMessage(status, Logger::Error, Logger::Both);
+  if (isWorkerErrorEvent(s.event)) {
+    logMessage(QString("Событие: ") + workerEventToString(s.event), Logger::Error);
   } else {
-    logMessage(status, Logger::Info, Logger::FileSystemOnly);
+    logMessage(QString("Событие: ") + workerEventToString(s.event), Logger::Info);
   }
 
-  infoLogMessage(QString("Текущий файл обработки: %1").arg(s.currentFile));
-  infoLogMessage(QString("Прогресс обработки файла: %1%").arg(s.fileProgress));
+  infoLogMessage(QString("Текущий файл обработки: %1").arg(s.fileStatusInfo.currentFile));
+  infoLogMessage(QString("Прогресс обработки файла: %1%").arg(s.fileStatusInfo.percent));
   infoLogMessage(QString("Обработано файлов: %1/%2")
-                     .arg(s.processedFiles)
-                     .arg(s.totalFiles));
-
-  logMessage(QString("Событие: ") + workerEventToString(s.event), Logger::Info,
-             Logger::Both);
+                     .arg(s.taskStatusInfo.processedFiles)
+                     .arg(s.taskStatusInfo.totalFiles));
 
   // const QString fileStatus = QString("Статус обработки файла:
   // %1").arg(workerStateToString(s.state)); if (s.fileProcessStatus ==
@@ -385,23 +354,13 @@ void MainWindow::parseWorkerStatus(const WorkerStatus &s) {
   //     infoLogMessage(fileStatus);
   // }
 
-  const QString workerMessage =
-      QString("Сообщение: %1").arg(s.message.value_or(""));
-  if (s.event == WorkerStatus::Event::FileError ||
-      s.event == WorkerStatus::Event::TaskError) {
-    logMessage(workerMessage, Logger::Error, Logger::Both);
-  } else {
-    logMessage(workerMessage, Logger::Info, Logger::Both);
-  }
-
-  logger->setOutputMode(Logger::Both);
 }
 
 void MainWindow::onTick() {
-  if (!_prevTaskParams)
+  if (!_prevTask)
     return;
 
-  if (_prevTaskParams->runMode != TaskParams::RunMode::Timer)
+  if (_prevTask->runMode != ERunMode::Timer)
     return;
 
   qint64 ms = QDateTime::currentDateTime().msecsTo(_timerEndTime);
@@ -412,10 +371,10 @@ void MainWindow::onTick() {
     runTask(true);
 
     int intervalSec;
-    if (_prevTaskParams->timerSecTime == 0)
+    if (_prevTask->timerSecTime == 0)
       intervalSec = ui->timerIntervalSpinBox->value();
     else {
-      intervalSec = _prevTaskParams->timerSecTime;
+      intervalSec = _prevTask->timerSecTime;
     }
     _timerEndTime = QDateTime::currentDateTime().addSecs(intervalSec);
     return;
@@ -426,15 +385,15 @@ void MainWindow::onTick() {
 }
 
 void MainWindow::startTimerMode() {
-  if (!_prevTaskParams ||
-      _prevTaskParams->runMode != TaskParams::RunMode::Timer) {
+  if (!_prevTask ||
+      _prevTask->runMode != ERunMode::Timer) {
     return;
   }
   int intervalSec;
-  if (_prevTaskParams->timerSecTime == 0)
+  if (_prevTask->timerSecTime == 0)
     intervalSec = ui->timerIntervalSpinBox->value();
   else {
-    intervalSec = _prevTaskParams->timerSecTime;
+    intervalSec = _prevTask->timerSecTime;
   }
   _timerEndTime = QDateTime::currentDateTime().addSecs(intervalSec);
   _tickTimer.start(TIMER_DISPLAY_UPDATE_TIME);
@@ -464,23 +423,23 @@ void MainWindow::onStart() {
 
   _remainingMs = 0;
 
-  TaskParams params = createTaskParams();
+  Task params = createTask();
 
   auto validationResult = validateTaskParams(params);
-  if (validationResult != ParamsValidationResult::Ok) {
+  if (validationResult != ETaskValidation::Ok) {
     handleValidationError(validationResult);
     return;
   }
 
-  if (params.runMode == TaskParams::RunMode::Timer &&
+  if (params.runMode == ERunMode::Timer &&
       !validateTimerSettings()) {
     logMessage("Интервал таймера должен быть больше 0.", Logger::Error);
     return;
   }
 
-  _prevTaskParams.reset(new TaskParams(std::move(params)));
+  _prevTask.reset(new Task(std::move(params)));
 
-  if (_prevTaskParams->runMode == TaskParams::RunMode::Timer) {
+  if (_prevTask->runMode == ERunMode::Timer) {
     startTimerMode();
   } else {
     _tickTimer.stop();
@@ -532,5 +491,5 @@ bool MainWindow::isPaused() {
 bool MainWindow::isBusy() {
   if (_worker)
     return _worker->isBusy();
-  return false;
+  return true;
 }

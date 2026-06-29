@@ -1,17 +1,19 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
-#include "errorMsg.h"
 #include "logger.h"
-#include "taskParams.h"
+#include "taskModel.h"
+#include "utils.h"
 #include "worker.h"
-#include "workerStatus.h"
 
 
 #include <QDateTime>
 #include <QMainWindow>
 #include <QTimer>
 
+
+using namespace TaskModel;
+using namespace WorkerModel;
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -23,9 +25,10 @@ class MainWindow : public QMainWindow {
   Q_OBJECT
 
 private:
-  using OutputMode = Logger::OutputMode;
-  using LogLevel = Logger::LogLevel;
+  using OutputMode = Logger::EOutputMode;
+  using LogLevel = Logger::ELogLevel;
 
+  using Task = TaskModel::Task;
 private:
   void init();
 
@@ -43,15 +46,14 @@ protected:
   void closeEvent(QCloseEvent *event) override;
 
 private:
-  TaskParams createTaskParams() const;
+  Task createTask() const;
 
-  ParamsValidationResult validateTaskParams(const TaskParams &params) const;
   bool validateTimerSettings() const;
-  void handleValidationError(ParamsValidationResult result);
+  void handleValidationError(ETaskValidation result);
 
   void runTask(bool fromTimer);
 
-  void startProcessing(const TaskParams &task);
+  void startProcessing(const Task &task);
 
   void logMessage(const QString &msg, LogLevel logLevel);
 
@@ -66,8 +68,8 @@ private:
     logMessage(msg, LogLevel::Error);
   }
 
-  void logTask(const TaskParams &params);
-  void parseWorkerStatus(const WorkerStatus &workerStatus);
+  void logTask(const TaskModel::Task &task);
+  void parseWorkerStatus(const Status &s);
 
 private slots:
   void browseInputDirectory();
@@ -87,7 +89,7 @@ private slots:
 private:
   Ui::MegaApp *ui;
 
-  QScopedPointer<TaskParams> _prevTaskParams;
+  QScopedPointer<Task> _prevTask;
   QScopedPointer<Logger> logger;
 
   QTimer _tickTimer;
